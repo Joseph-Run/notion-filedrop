@@ -17,11 +17,13 @@ perform. Total time: about three minutes.
    - Repository: `Joseph-Run/notion-filedrop`
    - Branch: `main`
    - Main file path: `Upload.py`
-4. Open **Advanced settings → Secrets** and paste:
+4. Open **Advanced settings → Secrets** and paste the contents of
+   `deploy-secrets.toml` from this project (it holds the real values — replace
+   nothing, but do not commit it; `.gitignore` covers it). Format:
 
    ```toml
-   NOTION_API_KEY = "ntn_your_integration_token"
-   NOTION_DATA_SOURCE_ID = "your-data-source-id"
+   NOTION_API_KEY = "ntn_..."          # the whole token, quotes included, no more
+   NOTION_DATA_SOURCE_ID = "..."
    REQUIRE_APPROVAL = true
    MAX_UPLOAD_MB = 50
    ```
@@ -31,6 +33,34 @@ perform. Total time: about three minutes.
 
 5. **Deploy**. First build takes a couple of minutes; you get a
    `https://<app-name>.streamlit.app` URL for both pages (`/` uploads, `/Download`).
+
+## Troubleshooting
+
+**"Upload failed: Notion 401 unauthorized ... API token is invalid"** — the app is
+holding a token that is not a real one. The most common causes, in order:
+
+1. The literal placeholder from these docs was pasted instead of the token. If the
+   value inside the quotes starts with anything other than `ntn_`/`secret_`, it is
+   wrong.
+2. A second pair of quotes, so the value literally is `"ntn_..."` including the
+   quote characters.
+3. A truncated paste, or a token from an integration that was rotated/revoked.
+
+Fix: dashboard → your app → **Settings → Secrets**, replace the values, save (the
+app restarts itself). Confirm from this machine with:
+
+```bash
+python scripts/live_check.py        # 200s everywhere means the token in
+                                    # .streamlit/secrets.toml is good
+```
+
+**"Upload failed: A Notion integration token is required"** — no secrets reached
+the app at all. On Streamlit Cloud that means the Secrets box is empty; locally it
+means `streamlit run` was started outside the project folder.
+
+**404 `object_not_found` on a page or data source** — the token is valid but the
+integration was never given access: in Notion open the page → `...` → *Connect to*
+→ your integration.
 
 ## 3. After it is live
 

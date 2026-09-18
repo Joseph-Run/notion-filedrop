@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .config import Settings
-from .notion_client import Document, NotionFiles
+from .notion_client import Document, NotionError, NotionFiles
 from .validation import validate_upload
 
 
@@ -62,6 +62,18 @@ class FileDrop:
                 filename=filename,
                 properties={s.approved_property: {"checkbox": not s.require_approval}},
             )
+        except NotionError as exc:
+            # The single most common setup mistake deserves its own wording.
+            if exc.status == 401:
+                return SubmitResult(
+                    False,
+                    "Notion rejected the integration token (401: "
+                    f"{exc.message}). Check NOTION_API_KEY in the app's secrets - a left-in "
+                    "placeholder, a doubled pair of quotes, or a truncated paste all fail "
+                    "exactly this way. `python scripts/live_check.py` reports whether the "
+                    "token in .streamlit/secrets.toml works.",
+                )
+            return SubmitResult(False, f"Upload failed: {exc}")
         except Exception as exc:  # surfaced verbatim in the UI, never swallowed
             return SubmitResult(False, f"Upload failed: {exc}")
 

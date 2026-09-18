@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .streamlit/secrets.toml
+deploy-secrets.toml
 .env
 .pytest_cache/
 scratch/

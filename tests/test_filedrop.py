@@ -160,6 +160,16 @@ def test_bad_token_is_reported(fake):
     assert err.value.status == 401
 
 
+def test_a_bad_token_explains_the_fix_instead_of_just_the_status(fake):
+    """What a user sees when a placeholder or a truncated token is pasted in."""
+    result = FileDrop(make_settings(fake, notion_token="ntn_your_integration_token")).publish(
+        title="T", filename="a.txt", data=b"hello"
+    )
+    assert not result.ok
+    assert "401" in result.message and "NOTION_API_KEY" in result.message
+    assert "placeholder" in result.message
+
+
 def test_passcode_required_when_configured(fake):
     drop = FileDrop(make_settings(fake, upload_passcode="letmein"))
     assert not drop.publish(title="T", filename="a.txt", data=b"x").ok
