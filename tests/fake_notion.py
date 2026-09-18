@@ -36,6 +36,7 @@ class FakeNotionState:
         self.url_serial = 0                  # bumps every time a url is handed out
         self.urls_issued: list[str] = []
         self.fail_send = False               # simulate a Notion 400 on file send
+        self.require_auth_for_files = False  # signed file urls that need the integration header
         self.databases_created: list[dict] = []
 
 
@@ -148,6 +149,9 @@ class _Handler(BaseHTTPRequestHandler):
             record = self.state.uploads.get(upload_id)
             if not record:
                 return self._send_error_json(404, "object_not_found", "no such file")
+            # Some storage urls do need auth; the client must retry with headers.
+            if self.state.require_auth_for_files and not self._authorized():
+                return self._send_error_json(403, "unauthorized", "signed url requires auth")
             return self._send_bytes(record["data"], name=record["filename"])
 
         return self._send_error_json(404, "object_not_found", path)

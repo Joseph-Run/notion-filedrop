@@ -94,6 +94,17 @@ def test_download_refetches_a_fresh_signed_url(fake):
     assert issued[-1] != issued[0], "the same signed url was reused instead of refreshed"
 
 
+def test_download_retries_with_auth_when_the_url_demands_it(fake):
+    """Notion calls these urls authenticated; the client must fall back to headers."""
+    fake.state.require_auth_for_files = True
+    drop = FileDrop(make_settings(fake, require_approval=False))
+    drop.publish(title="T", filename="a.txt", data=b"authenticated bytes")
+
+    page_id = drop.documents()[0].page_id
+    _, data = drop.fetch_document_bytes(page_id)
+    assert data == b"authenticated bytes"
+
+
 def test_moderation_gate_hides_unapproved_rows(fake):
     gated = FileDrop(make_settings(fake, require_approval=True))
     gated.publish(title="Pending doc", filename="p.txt", data=b"pending")
@@ -175,6 +186,21 @@ def test_validation_rules(filename, size, title, expect_ok):
         filename, size, max_bytes=20 * 1024 * 1024, allowed_extensions=("pdf", "txt"), title=title
     )
     assert bool(result) is expect_ok, result.error
+
+
+def test_the_size_message_is_unambiguous_at_the_boundary():
+    """One byte over used to read 'Too large: 50.0 MB; the limit is 50 MB'."""
+    limit = 50 * 1024 * 1024
+    over = validate_upload(
+        "a.pdf", limit + 1, max_bytes=limit, allowed_extensions=("pdf",), title="Edge"
+    )
+    assert not over
+    assert f"{limit + 1:,} bytes" in over.error and f"{limit:,} bytes" in over.error
+
+    exact = validate_upload(
+        "a.pdf", limit, max_bytes=limit, allowed_extensions=("pdf",), title="Edge"
+    )
+    assert exact, exact.error
 
 
 # -------------------------------------------------------------------- scripts

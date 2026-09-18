@@ -14,7 +14,9 @@ It proves, against the real API rather than the test double:
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
+import os
 import pathlib
 import sys
 import tomllib
@@ -62,12 +64,30 @@ def archive(token: str, page_id: str, base_url: str) -> None:
         _patch(token, page_id, base_url, {"archived": True})
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="End-to-end check against your real Notion workspace.")
+    parser.add_argument(
+        "--big",
+        type=int,
+        default=0,
+        metavar="MB",
+        help="also round-trip a file of this many MB (above 20 MB forces Notion's multi-part path)",
+    )
+    args = parser.parse_args(argv)
+
     secrets_path = ROOT / ".streamlit" / "secrets.toml"
     if not secrets_path.exists():
         print(f"No {secrets_path}. Run scripts/setup_notion.py first.")
         return 2
     config = tomllib.loads(secrets_path.read_text(encoding="utf-8"))
+
+    payload = TEST_BYTES
+    if args.big:
+        # exactly N MB so the configured ceiling itself gets exercised
+        header = b"%PDF-1.4\n% big-file check\n"
+        payload = header + os.urandom(args.big * 1024 * 1024 - len(header))
+        if len(payload) != args.big * 1024 * 1024:
+            raise SystemExit(f"payload is {len(payload)} bytes, expected {args.big} MB")
 
     token = config["NOTION_API_KEY"]
     settings = Settings(
@@ -80,8 +100,8 @@ def main() -> int:
     failures: list[str] = []
     title = f"LIVE CHECK {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 
-    print(f"1. uploading a test document as {title!r} ...")
-    result = drop.publish(title=title, filename="live-check.pdf", data=TEST_BYTES)
+    print(f"1. uploading a test document as {title!r} ({len(payload) / 1024 ** 2:.1f} MB) ...")
+    result = drop.publish(title=title, filename="live-check.pdf", data=payload)
     if not result.ok:
         print(f"   FAILED: {result.message}")
         return 1
@@ -107,8 +127,8 @@ def main() -> int:
     print("4. downloading it ...")
     if published:
         doc, data = drop.fetch_document_bytes(page_id)
-        if data != TEST_BYTES:
-            failures.append(f"bytes differ: sent {len(TEST_BYTES)}, got {len(data)}")
+        if data != payload:
+            failures.append(f"bytes differ: sent {len(payload)}, got {len(data)}")
         else:
             print(f"   ok: {len(data)} bytes round-tripped, filename {doc.file.name}")
 

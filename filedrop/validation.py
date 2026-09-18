@@ -45,10 +45,12 @@ def validate_upload(
     if not size_bytes:
         return ValidationResult(False, "That file looks empty.")
     if size_bytes > max_bytes:
+        # Show bytes as well as MB: at the boundary both round to the same MB and
+        # the message reads like a bug ("50.0 MB ... the limit is 50 MB").
         return ValidationResult(
             False,
-            f"Too large: {size_bytes / BYTES_PER_MB:.1f} MB. "
-            f"The limit here is {max_bytes / BYTES_PER_MB:.0f} MB.",
+            f"Too large: {size_bytes / BYTES_PER_MB:.1f} MB ({size_bytes:,} bytes); "
+            f"the limit here is {max_bytes / BYTES_PER_MB:.0f} MB ({max_bytes:,} bytes).",
         )
 
     ext = extension_of(filename)
