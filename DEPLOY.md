@@ -36,6 +36,13 @@ perform. Total time: about three minutes.
 
 ## Troubleshooting
 
+**`AttributeError` naming something that exists in the repo (e.g. `settings.max_total_upload_bytes`)**
+— the running instance is serving a *new* entrypoint with *old* imported modules.
+Streamlit Cloud pulls new files into `/mount/src/<repo>` and re-reads the entrypoint
+on every rerun, but `sys.modules` stays cached until the Python process restarts; a
+browser reload does **not** clear it. Fix: **Manage app** (lower right) → ⋮ →
+**Reboot app**. Any push to `main` usually triggers a clean rebuild too.
+
 **"Upload failed: Notion 401 unauthorized ... API token is invalid"** — the app is
 holding a token that is not a real one. The most common causes, in order:
 
