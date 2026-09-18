@@ -1,3 +1,8 @@
+# Pinned with upper bounds: a dependency change also forces the host to rebuild the
+# app image, which is the only thing that clears a stale in-process module cache
+# after a push (see DEPLOY.md -> Troubleshooting).
 streamlit>=1.63,<2
-requests>=2.31
-pytest>=8.0
+requests>=2.31,<3
+
+# Tests only; harmless in production but keeps the repo self-contained.
+pytest>=8,<10
