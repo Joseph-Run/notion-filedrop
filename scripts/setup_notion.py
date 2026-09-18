@@ -142,7 +142,9 @@ def write_secrets(path: str, token: str, data_source_id: str, *, require_approva
         f"REQUIRE_APPROVAL = {'true' if require_approval else 'false'}\n"
         'SITE_NAME = "Community File Drop"\n'
         "# UPLOAD_PASSCODE = \"\"        # set a shared word to stop random uploads\n"
-        "# MAX_UPLOAD_MB = 50           # above 20 MB the app sends the file in parts\n",
+        "# MAX_UPLOAD_MB = 50           # above 20 MB the app sends the file in parts\n"
+        "# MAX_FILES_PER_UPLOAD = 10    # files per label\n"
+        "# MAX_TOTAL_UPLOAD_MB = 150    # per submission, held in memory at once\n",
         encoding="utf-8",
     )
     print(f"\nWrote {target} - keep it out of git.")

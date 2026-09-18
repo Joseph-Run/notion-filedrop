@@ -5,8 +5,8 @@ with Notion as the filing cabinet and the moderator's console.
 
 | Page | URL | Who uses it |
 |---|---|---|
-| Upload | `/` (`Upload.py`) | Anyone. Type a name, pick a file, submit. |
-| Download | `/Download` (`pages/1_Download.py`) | Anyone. Browse approved documents, pull a copy. |
+| Upload | `/` (`Upload.py`) | Anyone. Type a name, pick one **or several** files, submit. |
+| Download | `/Download` (`pages/1_Download.py`) | Anyone. Browse approved documents, pull a copy of each file. |
 
 Once a file is submitted it is **out of the uploader's hands**: there is no edit,
 replace or delete path anywhere in the app, and no uploader identity is recorded
@@ -45,8 +45,8 @@ moderator ──▶ Notion database (tick Approved / delete a row)
 
 | Property | Type | Purpose |
 |---|---|---|
-| `Name` | title | the label the uploader typed |
-| `Document` | files | the uploaded file |
+| `Name` | title | the label the uploader typed — one row can hold several files |
+| `Document` | files | the uploaded file(s), one upload per file |
 | `Approved` | checkbox | your moderation switch |
 
 Rename them and set `NOTION_FILE_PROPERTY` / `NOTION_TITLE_PROPERTY` /
@@ -83,7 +83,9 @@ the test row. It leaves your workspace as it found it.
 | `NOTION_API_KEY` | – | integration token (required) |
 | `NOTION_DATA_SOURCE_ID` | – | the database to use (required) |
 | `REQUIRE_APPROVAL` | `true` | `false` publishes uploads instantly |
-| `MAX_UPLOAD_MB` | `50` | above 20 MB the file is sent in parts; hard-capped at Notion's 5 GB |
+| `MAX_UPLOAD_MB` | `50` | per file; above 20 MB the file is sent in parts, hard-capped at Notion's 5 GB |
+| `MAX_FILES_PER_UPLOAD` | `10` | how many files one label may carry |
+| `MAX_TOTAL_UPLOAD_MB` | `150` | per submission — every chosen file is held in memory at once |
 | `ALLOWED_EXTENSIONS` | documents + images + zip | allowlist, extension based |
 | `UPLOAD_PASSCODE` | empty | if set, uploading needs a shared word |
 | `SITE_NAME` | `Community File Drop` | shown in the UI |
@@ -122,11 +124,12 @@ servers.
 
 ## Limits worth knowing before you share the link
 
-- **Files up to 50 MB** out of the box (`MAX_UPLOAD_MB`). Notion's single-part
-  upload stops at 20 MB, so anything larger is split into 10 MB parts and finished
-  with a `/complete` call — the exact same file comes back out on download, as the
-  byte-for-byte tests show. Raise the setting up to Notion's 5 GB ceiling if you
-  have a paid workspace (the free plan caps uploads at 5 MB regardless).
+- **Files up to 50 MB each, 10 per label, 150 MB per submission** out of the box.
+  Notion's single-part upload stops at 20 MB, so anything larger is split into 10 MB
+  parts and finished with a `/complete` call — the exact same file comes back out on
+  download, as the byte-for-byte tests show. Raise `MAX_UPLOAD_MB` up to Notion's 5 GB
+  ceiling if you have a paid workspace (the free plan caps uploads at 5 MB regardless),
+  and raise the other two caps to match.
 - **~3 requests/second** against Notion. Fine for a small drop, not for a crowd.
 - **Anonymous uploads are public content.** Nothing stops someone uploading
   something illegal or malicious. The allowlist blocks executables and scripts, and
@@ -138,8 +141,10 @@ servers.
 ## Testing
 
 ```bash
-python -m pytest tests -q          # 40 tests: no network, real HTTP against a local fake
+python -m pytest tests -q          # 56 tests: no network, real HTTP against a local fake
 python scripts/live_check.py       # the same path, against your actual workspace
+python scripts/live_check.py --files 3      # several files under one label
+python scripts/live_check.py --big 50       # a 50 MB file, forcing the multi-part path
 ```
 
 - `tests/fake_notion.py` reproduces Notion's documented request/response shapes,

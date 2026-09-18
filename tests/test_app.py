@@ -59,7 +59,7 @@ def test_download_page_renders_every_approved_document(app_factory, fake_notion)
     assert not at.exception, at.exception
     body = "\n".join(m.value for m in at.markdown) + "\n".join(m.value for m in at.caption)
     assert "Annual report" in body and "Budget sheet" in body
-    assert "2 documents available" in body
+    assert "2 documents" in body and "2 files available" in body
 
 
 def test_download_page_hides_unapproved_uploads(app_factory, fake_notion):
@@ -77,6 +77,31 @@ def test_download_page_hides_unapproved_uploads(app_factory, fake_notion):
     at = open_download_page()
     text = "\n".join(m.value for m in at.markdown)
     assert "Pending secret" in text
+
+
+def test_a_row_with_several_files_gets_a_button_each(app_factory):
+    """One label, three files: three independent fetch/save pairs on the page."""
+    settings = app_factory(require_approval=False)
+    FileDrop(settings).publish(
+        title="Q3 pack",
+        files=[("agreement.pdf", b"%PDF agreement"), ("budget.csv", b"a,b\n1,2\n")],
+    )
+
+    at = open_download_page()
+    assert not at.exception, at.exception
+    body = "\n".join(m.value for m in at.markdown) + "\n".join(c.value for c in at.caption)
+    assert "Q3 pack" in body
+    assert "agreement.pdf" in body and "budget.csv" in body, "attachments not listed by name"
+    assert "1 document" in body and "2 files" in body
+
+    get_buttons = [b for b in at.button if b.label == "Get file"]
+    assert len(get_buttons) == 2, "each attachment needs its own fetch button"
+
+    # fetching one leaves the other untouched
+    get_buttons[0].click().run()
+    assert not at.exception, at.exception
+    assert len([b for b in at.get("download_button")]) == 1
+    assert len([b for b in at.button if b.label == "Get file"]) == 1
 
 
 def test_get_file_button_then_save_file_button(app_factory):

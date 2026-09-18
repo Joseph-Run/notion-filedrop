@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Sequence
 
 BYTES_PER_MB = 1024 * 1024
 
@@ -21,6 +22,47 @@ class ValidationResult:
 
     def __bool__(self) -> bool:  # lets callers write `if validate(...):`
         return self.ok
+
+
+def validate_submission(
+    files: Sequence[tuple[str, bytes]],
+    *,
+    max_bytes_per_file: int,
+    allowed_extensions: tuple[str, ...],
+    title: str = "",
+    max_files: int = 10,
+    max_total_bytes: int | None = None,
+) -> ValidationResult:
+    """Check a whole submission: count, total weight, then every file on its own."""
+    if not files:
+        return ValidationResult(False, "Choose at least one file.")
+    if len(files) > max_files:
+        return ValidationResult(
+            False,
+            f"Up to {max_files} files under one name at a time; you picked {len(files)}.",
+        )
+
+    total = sum(len(data or b"") for _, data in files)
+    if max_total_bytes is not None and total > max_total_bytes:
+        return ValidationResult(
+            False,
+            f"Those files add up to {total / BYTES_PER_MB:.1f} MB "
+            f"({total:,} bytes); the limit per submission is "
+            f"{max_total_bytes / BYTES_PER_MB:.0f} MB ({max_total_bytes:,} bytes). "
+            "Split it into two uploads.",
+        )
+
+    for name, data in files:
+        result = validate_upload(
+            name,
+            len(data or b""),
+            max_bytes=max_bytes_per_file,
+            allowed_extensions=allowed_extensions,
+            title=title,
+        )
+        if not result:
+            return result
+    return ValidationResult(True)
 
 
 def extension_of(filename: str) -> str:

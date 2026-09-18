@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Sequence
 
 from .config import Settings
-from .notion_client import Document, NotionError, NotionFiles
-from .validation import validate_upload
+from .notion_client import Document, NotionError, NotionFiles, RemoteFile
+from .validation import validate_submission
 
 
 @dataclass
@@ -31,35 +32,47 @@ class FileDrop:
         self,
         *,
         title: str,
-        filename: str,
-        data: bytes,
+        files: Sequence[tuple[str, bytes]] | None = None,
+        filename: str | None = None,
+        data: bytes | None = None,
         passcode: str = "",
     ) -> SubmitResult:
-        """Validate, push the bytes to Notion, create the row. No edit path exists."""
+        """Validate, push every file to Notion, create one row holding them all.
+
+        Pass `files` as [(filename, bytes), ...] to put several files under one
+        label; `filename`/`data` is the single-file shorthand. There is no edit,
+        replace or delete path anywhere in this app, by design.
+        """
         s = self.settings
+
+        items: list[tuple[str, bytes]] = list(files or [])
+        if filename is not None or data is not None:
+            items.append((filename or "", data or b""))
 
         if s.upload_passcode and passcode != s.upload_passcode:
             return SubmitResult(False, "Wrong upload passcode.")
 
-        check = validate_upload(
-            filename,
-            len(data or b""),
-            max_bytes=s.max_upload_bytes,
+        check = validate_submission(
+            items,
+            max_bytes_per_file=s.max_upload_bytes,
             allowed_extensions=s.allowed_extensions,
             title=title,
+            max_files=s.max_files_per_upload,
+            max_total_bytes=s.max_total_upload_bytes,
         )
         if not check:
             return SubmitResult(False, check.error)
 
         try:
-            upload_id = self.client.upload_file(filename, data)
+            attachments = [
+                (self.client.upload_file(name, blob), name) for name, blob in items
+            ]
             page = self.client.create_page(
                 s.data_source_id,
                 title=title.strip(),
-                file_upload_id=upload_id,
+                attachments=attachments,
                 file_property=s.file_property,
                 title_property=s.title_property,
-                filename=filename,
                 properties={s.approved_property: {"checkbox": not s.require_approval}},
             )
         except NotionError as exc:
@@ -78,11 +91,14 @@ class FileDrop:
             return SubmitResult(False, f"Upload failed: {exc}")
 
         page_id = page.get("id", "")
+        count = len(items)
+        label = f"{count} files" if count > 1 else "Your file"
         return SubmitResult(
             True,
-            "Uploaded. It is pending review and will appear on the download page once approved."
+            f"{label} uploaded. It is pending review and will appear on the download "
+            "page once approved."
             if s.require_approval
-            else "Uploaded. It is live on the download page now.",
+            else f"{label} uploaded and live on the download page now.",
             page_url=f"https://www.notion.so/{page_id.replace('-', '')}" if page_id else None,
         )
 
@@ -99,12 +115,25 @@ class FileDrop:
             approved_property=s.approved_property,
         )
 
-    def fetch_document_bytes(self, page_id: str) -> tuple[Document, bytes]:
-        """Re-read the row for a fresh signed url, then pull the bytes."""
+    def fetch_attachment(self, page_id: str, index: int = 0) -> tuple[RemoteFile, bytes]:
+        """Re-read the row for fresh signed urls, then pull one attachment's bytes."""
         s = self.settings
         doc = self.client.get_document(
             page_id, file_property=s.file_property, title_property=s.title_property
         )
-        if doc.file is None:
+        if not doc.attachments:
             raise FileNotFoundError("That entry has no file attached any more.")
-        return doc, self.client.fetch_bytes(doc.file.url)
+        if index >= len(doc.attachments):
+            raise IndexError(f"That entry has {len(doc.attachments)} files; asked for #{index + 1}.")
+        attachment = doc.attachments[index]
+        return attachment, self.client.fetch_bytes(attachment.url)
+
+    def fetch_document_bytes(self, page_id: str) -> tuple[Document, bytes]:
+        """The first attachment, for callers that only deal with one file."""
+        s = self.settings
+        doc = self.client.get_document(
+            page_id, file_property=s.file_property, title_property=s.title_property
+        )
+        if not doc.attachments:
+            raise FileNotFoundError("That entry has no file attached any more.")
+        return doc, self.client.fetch_bytes(doc.attachments[0].url)

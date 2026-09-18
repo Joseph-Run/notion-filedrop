@@ -64,6 +64,12 @@ class Settings:
     max_upload_mb: float = field(
         default_factory=lambda: float(_secret("MAX_UPLOAD_MB") or 50)
     )
+    max_files_per_upload: int = field(
+        default_factory=lambda: int(_secret("MAX_FILES_PER_UPLOAD") or 10)
+    )
+    max_total_upload_mb: float = field(
+        default_factory=lambda: float(_secret("MAX_TOTAL_UPLOAD_MB") or 150)
+    )
     allowed_extensions: tuple[str, ...] = field(
         default_factory=lambda: tuple(
             ext.strip().lower()
@@ -78,6 +84,15 @@ class Settings:
     def max_upload_bytes(self) -> int:
         # Files above 20 MB go up in parts; 5 GB is Notion's own ceiling.
         return int(min(self.max_upload_mb, 5 * 1024) * 1024 * 1024)
+
+    @property
+    def max_total_upload_bytes(self) -> int:
+        """Per submission, because every chosen file is held in memory at once.
+
+        Honours the configured value exactly: setting it below MAX_UPLOAD_MB simply
+        makes the total the binding limit.
+        """
+        return int(self.max_total_upload_mb * 1024 * 1024)
 
     @property
     def configured(self) -> bool:

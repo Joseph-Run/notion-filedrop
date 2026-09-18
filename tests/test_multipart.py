@@ -118,10 +118,12 @@ def test_a_part_out_of_range_is_rejected(fake_notion):
     assert "between 1 and 2" in err.value.message
 
 
-def test_app_ceiling_is_configurable_and_capped(fake_notion):
+def test_the_app_ceiling_is_configurable_and_capped(fake_notion):
     assert build_settings(fake_notion, max_upload_mb=50).max_upload_bytes == 50 * MB
     # nothing can exceed Notion's own ceiling, however high the setting goes
     assert build_settings(fake_notion, max_upload_mb=99999).max_upload_bytes == MAX_MULTIPART_BYTES
+    # the per-submission cap is honoured as configured, even below the per-file cap
+    assert build_settings(fake_notion, max_total_upload_mb=10).max_total_upload_bytes == 10 * MB
 
 
 def test_a_file_over_the_configured_ceiling_is_refused_before_upload(fake_notion):

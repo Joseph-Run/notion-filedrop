@@ -94,9 +94,20 @@ class _Handler(BaseHTTPRequestHandler):
         return url
 
     def _page_response(self, page: dict) -> dict:
-        upload_id = page["upload_id"]
-        record = self.state.uploads.get(upload_id, {})
-        filename = page["filename"]
+        files = []
+        for upload_id, filename in page.get("attachments", []):
+            if upload_id not in self.state.uploads:
+                continue
+            files.append(
+                {
+                    "name": filename,
+                    "type": "file",
+                    "file": {
+                        "url": self._fresh_file_url(upload_id, filename),
+                        "expiry_time": _iso_now(),
+                    },
+                }
+            )
         return {
             "object": "page",
             "id": page["id"],
@@ -110,22 +121,7 @@ class _Handler(BaseHTTPRequestHandler):
                     "title": [{"plain_text": page["title"], "type": "text"}],
                 },
                 "Approved": {"id": "chk", "type": "checkbox", "checkbox": page["approved"]},
-                "Document": {
-                    "id": "fls",
-                    "type": "files",
-                    "files": [
-                        {
-                            "name": filename,
-                            "type": "file",
-                            "file": {
-                                "url": self._fresh_file_url(upload_id, filename),
-                                "expiry_time": _iso_now(),
-                            },
-                        }
-                    ]
-                    if record
-                    else [],
-                },
+                "Document": {"id": "fls", "type": "files", "files": files},
             },
         }
 
@@ -301,21 +297,20 @@ class _Handler(BaseHTTPRequestHandler):
             props = body.get("properties") or {}
             title_parts = ((props.get("Name") or {}).get("title")) or []
             title = "".join(p.get("text", {}).get("content", "") for p in title_parts)
-            files = ((props.get("Document") or {}).get("files")) or []
-            upload_id = ""
-            filename = "document"
-            if files:
-                upload_id = (files[0].get("file_upload") or {}).get("id", "")
-                filename = files[0].get("name") or self.state.uploads.get(upload_id, {}).get(
+            entries = ((props.get("Document") or {}).get("files")) or []
+            attachments = []
+            for entry in entries:
+                upload_id = (entry.get("file_upload") or {}).get("id", "")
+                name = entry.get("name") or self.state.uploads.get(upload_id, {}).get(
                     "filename", "document"
                 )
+                attachments.append((upload_id, name))
             page = {
                 "id": str(uuid.uuid4()),
                 "created_time": _iso_now(offset_seconds=0),
                 "title": title,
                 "approved": bool((props.get("Approved") or {}).get("checkbox")),
-                "upload_id": upload_id,
-                "filename": filename,
+                "attachments": attachments,
                 "parent": parent,
             }
             self.state.pages.append(page)

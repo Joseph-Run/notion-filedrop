@@ -2,14 +2,17 @@
 
 Run after scripts/setup_notion.py:
 
-    python scripts/live_check.py            # uploads a small test file, then removes it
+    python scripts/live_check.py                # one small file
+    python scripts/live_check.py --files 3      # three files under one label
+    python scripts/live_check.py --big 50       # one 50 MB file (forces multi-part)
+    python scripts/live_check.py --files 2 --big 25
 
 It proves, against the real API rather than the test double:
-  1. the file upload lands in Notion (create -> send -> attach),
-  2. the moderation gate keeps it off the public list until it is approved,
+  1. the files land in Notion (create -> send -> attach, one upload per file),
+  2. the moderation gate keeps the row off the public list until it is approved,
   3. approving it (the tick you make in Notion, done here over the API) publishes it,
-  4. a download re-reads the row and returns exactly the bytes that went up,
-  5. the test row is archived again so your workspace is left as it was.
+  4. every attachment downloads byte-for-byte as sent,
+  5. the test rows are archived again so your workspace is left as it was.
 """
 
 from __future__ import annotations
@@ -26,14 +29,25 @@ import requests
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from filedrop.config import Settings  # noqa: E402
 from filedrop.notion_client import API_VERSION  # noqa: E402
 from filedrop.store import FileDrop  # noqa: E402
-from filedrop.config import Settings  # noqa: E402
 
 TEST_BYTES = (
     b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n"
     b"% live check document - safe to delete\n%%EOF\n"
 ) * 20
+
+
+def build_payload(name: str, index: int, size_mb: int) -> bytes:
+    """A unique payload per file, so a mix-up between attachments cannot pass."""
+    header = f"%PDF-1.4\n% {name} #{index} marker-{os.urandom(4).hex()}\n".encode()
+    if not size_mb:
+        return header + TEST_BYTES
+    target = size_mb * 1024 * 1024
+    if len(header) >= target:
+        raise SystemExit(f"payload header already exceeds {size_mb} MB")
+    return header + os.urandom(target - len(header))
 
 
 def _patch(token: str, page_id: str, base_url: str, body: dict) -> requests.Response:
@@ -66,14 +80,17 @@ def archive(token: str, page_id: str, base_url: str) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="End-to-end check against your real Notion workspace.")
+    parser.add_argument("--files", type=int, default=1, metavar="N", help="files under one label")
     parser.add_argument(
         "--big",
         type=int,
         default=0,
         metavar="MB",
-        help="also round-trip a file of this many MB (above 20 MB forces Notion's multi-part path)",
+        help="size of each file (above 20 MB forces Notion's multi-part path)",
     )
     args = parser.parse_args(argv)
+    if args.files < 1:
+        parser.error("--files must be at least 1")
 
     secrets_path = ROOT / ".streamlit" / "secrets.toml"
     if not secrets_path.exists():
@@ -81,13 +98,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     config = tomllib.loads(secrets_path.read_text(encoding="utf-8"))
 
-    payload = TEST_BYTES
-    if args.big:
-        # exactly N MB so the configured ceiling itself gets exercised
-        header = b"%PDF-1.4\n% big-file check\n"
-        payload = header + os.urandom(args.big * 1024 * 1024 - len(header))
-        if len(payload) != args.big * 1024 * 1024:
-            raise SystemExit(f"payload is {len(payload)} bytes, expected {args.big} MB")
+    items = [
+        (f"live-check-{i + 1}.pdf", build_payload(f"live-check-{i + 1}.pdf", i + 1, args.big))
+        for i in range(args.files)
+    ]
+    weight = sum(len(blob) for _, blob in items)
 
     token = config["NOTION_API_KEY"]
     settings = Settings(
@@ -100,8 +115,11 @@ def main(argv: list[str] | None = None) -> int:
     failures: list[str] = []
     title = f"LIVE CHECK {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 
-    print(f"1. uploading a test document as {title!r} ({len(payload) / 1024 ** 2:.1f} MB) ...")
-    result = drop.publish(title=title, filename="live-check.pdf", data=payload)
+    print(
+        f"1. uploading {len(items)} file(s) as {title!r} "
+        f"({weight / 1024 ** 2:.1f} MB total) ..."
+    )
+    result = drop.publish(title=title, files=items)
     if not result.ok:
         print(f"   FAILED: {result.message}")
         return 1
@@ -124,19 +142,32 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("   ok: published")
 
-    print("4. downloading it ...")
+    print(f"4. downloading all {len(items)} attachment(s) ...")
     if published:
-        doc, data = drop.fetch_document_bytes(page_id)
-        if data != payload:
-            failures.append(f"bytes differ: sent {len(payload)}, got {len(data)}")
+        row = published[0]
+        names = [a.name for a in row.attachments]
+        expected_names = [name for name, _ in items]
+        if names != expected_names:
+            failures.append(f"attachments are {names}, expected {expected_names}")
         else:
-            print(f"   ok: {len(data)} bytes round-tripped, filename {doc.file.name}")
+            print(f"   ok: row carries {names}")
+        for index, (name, blob) in enumerate(items):
+            try:
+                attachment, data = drop.fetch_attachment(page_id, index)
+            except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+                failures.append(f"attachment {index + 1} ({name}) failed to download: {exc}")
+                continue
+            if data != blob:
+                failures.append(
+                    f"attachment {index + 1} ({name}) came back changed: "
+                    f"sent {len(blob)} bytes, got {len(data)}"
+                )
+            else:
+                print(f"   ok: {name} — {len(data)} bytes round-tripped, name preserved")
 
     print("5. cleaning up ...")
     # sweep every test row, in case an earlier run left one behind
-    for doc in drop.client.list_documents(
-        settings.data_source_id, approved_only=False
-    ):
+    for doc in drop.client.list_documents(settings.data_source_id, approved_only=False):
         if doc.title.startswith("LIVE CHECK"):
             archive(token, doc.page_id, settings.notion_api_base)
             print(f"   archived {doc.page_id}")

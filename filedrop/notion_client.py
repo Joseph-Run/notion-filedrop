@@ -21,7 +21,7 @@ import json
 import mimetypes
 import time
 from dataclasses import dataclass
-from typing import Any, Iterator
+from typing import Any, Iterator, Sequence
 
 import requests
 
@@ -109,7 +109,16 @@ class Document:
     title: str
     created_time: str
     approved: bool
-    file: RemoteFile | None
+    attachments: tuple[RemoteFile, ...] = ()
+
+    @property
+    def file(self) -> RemoteFile | None:
+        """The first attachment - a row can hold several under one label."""
+        return self.attachments[0] if self.attachments else None
+
+    @property
+    def multiple(self) -> bool:
+        return len(self.attachments) > 1
 
     @property
     def notion_url(self) -> str:
@@ -287,23 +296,36 @@ class NotionFiles:
         data_source_id: str,
         *,
         title: str,
-        file_upload_id: str,
+        attachments: Sequence[tuple[str, str]] | None = None,
+        file_upload_id: str | None = None,
         file_property: str = "Document",
         title_property: str = "Name",
         filename: str | None = None,
         properties: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Create one row: the title, the attached file, plus any extra properties.
+        """Create one row: a title, one or more attached files, extra properties.
 
-        Extra properties are merged, which is where the moderation flag is set.
+        `attachments` is a sequence of (file_upload_id, filename) so several files
+        can live under the single label the uploader typed. `file_upload_id` +
+        `filename` is the single-file shorthand.
         """
-        file_value: dict[str, Any] = {"type": "file_upload", "file_upload": {"id": file_upload_id}}
-        if filename:
-            file_value["name"] = filename
+        entries: list[dict[str, Any]] = []
+        for upload_id, name in attachments or ():
+            entry: dict[str, Any] = {"type": "file_upload", "file_upload": {"id": upload_id}}
+            if name:
+                entry["name"] = name
+            entries.append(entry)
+        if not entries and file_upload_id:
+            entry = {"type": "file_upload", "file_upload": {"id": file_upload_id}}
+            if filename:
+                entry["name"] = filename
+            entries.append(entry)
+        if not entries:
+            raise ValueError("A page must carry at least one attached file.")
 
         payload_properties: dict[str, Any] = {
             title_property: {"title": [{"text": {"content": title[:2000]}}]},
-            file_property: {"type": "files", "files": [file_value]},
+            file_property: {"type": "files", "files": entries},
         }
         if properties:
             payload_properties.update(properties)
@@ -353,22 +375,29 @@ class NotionFiles:
     # -------------------------------------------------------------- read side
 
     @staticmethod
-    def parse_file(page: dict[str, Any], file_property: str = "Document") -> RemoteFile | None:
-        """Pull the (write-only) file_upload back out as a signed, temporary url."""
+    def parse_files(page: dict[str, Any], file_property: str = "Document") -> tuple[RemoteFile, ...]:
+        """Pull the (write-only) file_uploads back out as signed, temporary urls."""
         prop = (page.get("properties") or {}).get(file_property) or {}
-        files = prop.get("files") or []
-        if not files:
-            return None
-        first = files[0]
-        source = first.get(first.get("type", ""), {}) or {}
-        url = source.get("url")
-        if not url:
-            return None
-        return RemoteFile(
-            name=first.get("name") or "download",
-            url=url,
-            expiry_time=source.get("expiry_time"),
-        )
+        found: list[RemoteFile] = []
+        for entry in prop.get("files") or []:
+            source = entry.get(entry.get("type", ""), {}) or {}
+            url = source.get("url")
+            if not url:
+                continue
+            found.append(
+                RemoteFile(
+                    name=entry.get("name") or "download",
+                    url=url,
+                    expiry_time=source.get("expiry_time"),
+                )
+            )
+        return tuple(found)
+
+    @classmethod
+    def parse_file(cls, page: dict[str, Any], file_property: str = "Document") -> RemoteFile | None:
+        """The first attachment, for callers that only handle one."""
+        files = cls.parse_files(page, file_property)
+        return files[0] if files else None
 
     @staticmethod
     def parse_title(page: dict[str, Any], title_property: str = "Name") -> str:
@@ -400,7 +429,7 @@ class NotionFiles:
                     title=self.parse_title(page, title_property),
                     created_time=page.get("created_time", ""),
                     approved=self.parse_approved(page, approved_property),
-                    file=self.parse_file(page, file_property),
+                    attachments=self.parse_files(page, file_property),
                 )
             )
         return docs
@@ -408,14 +437,14 @@ class NotionFiles:
     def get_document(
         self, page_id: str, *, file_property: str = "Document", title_property: str = "Name"
     ) -> Document:
-        """Re-read a single row so its signed url is fresh (they die after 1 hour)."""
+        """Re-read a single row so its signed urls are fresh (they die after 1 hour)."""
         page = self._json("GET", f"/v1/pages/{page_id}")
         return Document(
             page_id=page.get("id", page_id),
             title=self.parse_title(page, title_property),
             created_time=page.get("created_time", ""),
             approved=self.parse_approved(page),
-            file=self.parse_file(page, file_property),
+            attachments=self.parse_files(page, file_property),
         )
 
     def fetch_bytes(self, url: str) -> bytes:
