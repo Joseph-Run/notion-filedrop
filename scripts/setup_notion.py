@@ -142,7 +142,7 @@ def write_secrets(path: str, token: str, data_source_id: str, *, require_approva
         f"REQUIRE_APPROVAL = {'true' if require_approval else 'false'}\n"
         'SITE_NAME = "Community File Drop"\n'
         "# UPLOAD_PASSCODE = \"\"        # set a shared word to stop random uploads\n"
-        "# MAX_UPLOAD_MB = 20           # Notion's hard ceiling for a single-part upload\n",
+        "# MAX_UPLOAD_MB = 50           # above 20 MB the app sends the file in parts\n",
         encoding="utf-8",
     )
     print(f"\nWrote {target} - keep it out of git.")

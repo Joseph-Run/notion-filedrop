@@ -62,7 +62,7 @@ class Settings:
     )
     require_approval: bool = field(default_factory=lambda: _secret_flag("REQUIRE_APPROVAL", True))
     max_upload_mb: float = field(
-        default_factory=lambda: float(_secret("MAX_UPLOAD_MB") or 20)
+        default_factory=lambda: float(_secret("MAX_UPLOAD_MB") or 50)
     )
     allowed_extensions: tuple[str, ...] = field(
         default_factory=lambda: tuple(
@@ -76,8 +76,8 @@ class Settings:
 
     @property
     def max_upload_bytes(self) -> int:
-        # Nothing above Notion's single-part ceiling can succeed anyway.
-        return int(min(self.max_upload_mb, 20) * 1024 * 1024)
+        # Files above 20 MB go up in parts; 5 GB is Notion's own ceiling.
+        return int(min(self.max_upload_mb, 5 * 1024) * 1024 * 1024)
 
     @property
     def configured(self) -> bool:

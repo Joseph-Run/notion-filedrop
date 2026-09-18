@@ -39,7 +39,7 @@ if not documents:
         "Nothing here yet. "
         + ("Uploads appear once a moderator approves them." if settings.require_approval else "Be the first to upload something.")
     )
-    st.page_link("app.py", label="← Upload a document")
+    st.page_link("Upload.py", label="← Upload a document")
     st.stop()
 
 st.write(f"{len(documents)} document{'s' if len(documents) != 1 else ''} available")
@@ -79,4 +79,4 @@ for index, doc in enumerate(documents):
         )
 
 st.divider()
-st.page_link("app.py", label="← Upload a document")
+st.page_link("Upload.py", label="← Upload a document")

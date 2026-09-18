@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import time
 from dataclasses import dataclass
 from typing import Any, Iterator
 
@@ -27,6 +28,14 @@ import requests
 NOTION_BASE = "https://api.notion.com"
 API_VERSION = "2026-03-11"
 MAX_SINGLE_PART_BYTES = 20 * 1024 * 1024  # Notion's documented single-part limit
+
+# Multi-part upload (for anything above the single-part ceiling).
+PART_SIZE_BYTES = 10 * 1024 * 1024      # 10 MB parts sit inside Notion's 5-20 MB window
+MIN_PART_BYTES = 5 * 1024 * 1024        # every part except the last must be at least this
+MAX_PART_BYTES = 20 * 1024 * 1024
+MAX_MULTIPART_BYTES = 5 * 1024 * 1024 * 1024  # 5 GB, Notion's documented ceiling
+MAX_PARTS = 1000
+PART_DELAY_SECONDS = 0.34               # keeps part sends under Notion's ~3 req/s
 
 
 def guess_content_type(filename: str, provided: str | None = None) -> str:
@@ -40,6 +49,36 @@ def guess_content_type(filename: str, provided: str | None = None) -> str:
     if provided:
         return provided
     return mimetypes.guess_type(filename or "")[0] or "application/octet-stream"
+
+
+def plan_upload(total_bytes: int, part_size: int = PART_SIZE_BYTES) -> tuple[str, int]:
+    """Decide single-part vs multi-part before any bytes move.
+
+    Returns (mode, number_of_parts). Raises ValueError when the file cannot be
+    sent at all. Kept pure so the limits can be tested without allocating files.
+    """
+    if total_bytes <= 0:
+        raise ValueError("Empty file.")
+    if total_bytes > MAX_MULTIPART_BYTES:
+        raise ValueError(
+            f"{total_bytes / 1024 ** 3:.1f} GB exceeds Notion's 5 GB upload ceiling."
+        )
+    if total_bytes <= MAX_SINGLE_PART_BYTES:
+        return "single_part", 1
+    if not MIN_PART_BYTES <= part_size <= MAX_PART_BYTES:
+        raise ValueError(
+            f"Part size must be between {MIN_PART_BYTES / 1024 ** 2:.0f} MB and "
+            f"{MAX_PART_BYTES / 1024 ** 2:.0f} MB."
+        )
+    parts = -(-total_bytes // part_size)  # ceil division
+    if parts > MAX_PARTS:
+        raise ValueError(f"That file would need {parts} parts; Notion allows {MAX_PARTS}.")
+    return "multi_part", parts
+
+
+def split_into_parts(data: bytes, part_size: int = PART_SIZE_BYTES) -> list[bytes]:
+    """Fixed-size parts; only the final part may be smaller than MIN_PART_BYTES."""
+    return [data[offset : offset + part_size] for offset in range(0, len(data), part_size)]
 
 
 class NotionError(RuntimeError):
@@ -138,11 +177,22 @@ class NotionFiles:
 
     # ------------------------------------------------------------ file upload
 
-    def create_file_upload(self, filename: str, content_type: str | None = None) -> dict[str, Any]:
+    def create_file_upload(
+        self,
+        filename: str,
+        content_type: str | None = None,
+        *,
+        mode: str = "single_part",
+        number_of_parts: int | None = None,
+    ) -> dict[str, Any]:
         """Step 1: reserve a file upload slot. Returns id + upload_url."""
         payload: dict[str, Any] = {"filename": filename}
         if content_type:
             payload["content_type"] = content_type
+        if mode != "single_part":
+            payload["mode"] = mode
+            if number_of_parts:
+                payload["number_of_parts"] = number_of_parts
         return self._json("POST", "/v1/file_uploads", payload)
 
     def send_file(
@@ -151,34 +201,83 @@ class NotionFiles:
         data: bytes,
         filename: str,
         content_type: str = "application/octet-stream",
+        *,
+        part_number: int | None = None,
+        attempts: int = 3,
     ) -> dict[str, Any]:
-        """Step 2: POST the bytes as multipart/form-data under the `file` key."""
+        """Step 2: POST the bytes as multipart/form-data under the `file` key.
+
+        For a multi-part upload the `part_number` form field says which slice
+        this is. 429s are retried, honouring Retry-After, because part sends are
+        the one place this app can outrun Notion's ~3 req/s budget.
+        """
         path = f"/v1/file_uploads/{file_upload_id}/send"
-        # Do not set Content-Type by hand - requests builds the MIME boundary.
-        response = self.session.post(
-            f"{self.base_url}{path}",
-            headers=self._headers(),
-            files={"file": (filename, data, content_type)},
-            timeout=self.timeout,
-        )
+        form = {"part_number": str(part_number)} if part_number else None
+
+        for attempt in range(1, attempts + 1):
+            response = self.session.post(
+                f"{self.base_url}{path}",
+                headers=self._headers(),
+                # Do not set Content-Type by hand - requests builds the MIME boundary.
+                files={"file": (filename, data, content_type)},
+                data=form,
+                timeout=self.timeout,
+            )
+            if response.status_code == 429 and attempt < attempts:
+                try:
+                    wait = float(response.headers.get("Retry-After", "1") or 1)
+                except ValueError:
+                    wait = 1.0
+                time.sleep(min(max(wait, 0.5), 5.0))
+                continue
+            break
+
         self._raise_for_status(response, path)
         return response.json()
+
+    def complete_file_upload(self, file_upload_id: str) -> dict[str, Any]:
+        """Step 3 for multi-part uploads: notifies Notion every part arrived."""
+        return self._json("POST", f"/v1/file_uploads/{file_upload_id}/complete", {})
 
     def upload_file(
         self, filename: str, data: bytes, content_type: str | None = None
     ) -> str:
-        """Steps 1+2 together. Returns the file_upload id to attach."""
-        if len(data) > MAX_SINGLE_PART_BYTES:
-            raise ValueError(
-                f"{filename} is {len(data) / 1e6:.1f} MB; Notion's single-part limit is 20 MB."
-            )
+        """Send the bytes (single or multi-part) and return the file_upload id."""
+        mode, parts = plan_upload(len(data))
         # One content type for both calls - see guess_content_type().
         resolved_type = guess_content_type(filename, content_type)
-        created = self.create_file_upload(filename, resolved_type)
-        sent = self.send_file(created["id"], data, filename, resolved_type)
-        upload_id = sent.get("id") or created["id"]
-        if sent.get("status") not in (None, "uploaded"):
-            raise NotionError(400, sent.get("status", "bad_status"), "upload incomplete", f"/v1/file_uploads/{upload_id}")
+        created = self.create_file_upload(
+            filename,
+            resolved_type,
+            mode=mode,
+            number_of_parts=parts if mode == "multi_part" else None,
+        )
+        upload_id = created["id"]
+
+        if mode == "single_part":
+            sent = self.send_file(upload_id, data, filename, resolved_type)
+            if sent.get("status") not in (None, "uploaded"):
+                raise NotionError(
+                    400,
+                    sent.get("status", "bad_status"),
+                    "upload incomplete",
+                    f"/v1/file_uploads/{upload_id}",
+                )
+            return upload_id
+
+        for index, chunk in enumerate(split_into_parts(data), start=1):
+            if index > 1:
+                time.sleep(PART_DELAY_SECONDS)
+            self.send_file(upload_id, chunk, filename, resolved_type, part_number=index)
+
+        finished = self.complete_file_upload(upload_id)
+        if finished.get("status") != "uploaded":
+            raise NotionError(
+                400,
+                finished.get("status", "bad_status"),
+                f"multi-part upload did not complete ({parts} parts sent)",
+                f"/v1/file_uploads/{upload_id}",
+            )
         return upload_id
 
     # ----------------------------------------------------------------- pages

@@ -165,6 +165,9 @@ class _Handler(BaseHTTPRequestHandler):
                 "filename": body.get("filename") or "upload.bin",
                 "content_type": body.get("content_type") or "application/octet-stream",
                 "data": b"",
+                "mode": body.get("mode") or "single_part",
+                "number_of_parts": body.get("number_of_parts"),
+                "parts": {},
             }
             return self._send_json(
                 {
@@ -174,8 +177,35 @@ class _Handler(BaseHTTPRequestHandler):
                     "filename": None,
                     "content_type": None,
                     "content_length": None,
+                    "mode": self.state.uploads[upload_id]["mode"],
+                    "number_of_parts": body.get("number_of_parts"),
                     "upload_url": f"{self._base_url()}/v1/file_uploads/{upload_id}/send",
                     "expiry_time": _iso_now(),
+                }
+            )
+
+        if path.startswith("/v1/file_uploads/") and path.endswith("/complete"):
+            if not self._authorized():
+                return self._send_error_json(401, "unauthorized", "bad token")
+            upload_id = path.split("/")[3]
+            record = self.state.uploads.get(upload_id)
+            if record is None:
+                return self._send_error_json(404, "object_not_found", "no such upload")
+            expected = int(record.get("number_of_parts") or 0)
+            missing = [str(i) for i in range(1, expected + 1) if i not in record["parts"]]
+            if missing:
+                return self._send_error_json(
+                    400, "validation_error", f"missing parts: {', '.join(missing)}"
+                )
+            record["data"] = b"".join(record["parts"][i] for i in sorted(record["parts"]))
+            return self._send_json(
+                {
+                    "object": "file_upload",
+                    "id": upload_id,
+                    "status": "uploaded",
+                    "filename": record["filename"],
+                    "content_type": record["content_type"],
+                    "content_length": str(len(record["data"])),
                 }
             )
 
@@ -191,8 +221,9 @@ class _Handler(BaseHTTPRequestHandler):
                     400, "validation_error", "content length greater than the 20MB limit"
                 )
             raw = self._read_body()
-            filename, data, content_type = self._parse_multipart(
-                raw, self.headers.get("Content-Type", "")
+            fields = self._parse_multipart_fields(raw, self.headers.get("Content-Type", ""))
+            filename, data, content_type = fields.get(
+                "file", ("upload.bin", b"", "application/octet-stream")
             )
             # Notion rejects a send whose content type differs from the one
             # declared at creation - reproduce that so the client can't regress.
@@ -204,6 +235,48 @@ class _Handler(BaseHTTPRequestHandler):
                     f"Current file content type of `{content_type}` does not match the "
                     f"original content type of `{declared}`.",
                 )
+
+            if record["mode"] == "multi_part":
+                expected = int(record.get("number_of_parts") or 0)
+                part_field = fields.get("part_number")
+                if part_field is None:
+                    return self._send_error_json(
+                        400, "validation_error", "part_number is required for a multi-part upload"
+                    )
+                try:
+                    part_number = int((part_field[1] or b"").decode().strip())
+                except ValueError:
+                    return self._send_error_json(400, "validation_error", "part_number must be an integer")
+                if not 1 <= part_number <= expected:
+                    return self._send_error_json(
+                        400,
+                        "validation_error",
+                        f"part_number must be between 1 and {expected}, got {part_number}",
+                    )
+                if len(data) > 20 * 1024 * 1024:
+                    return self._send_error_json(
+                        400, "validation_error", "each part must be at most 20MB"
+                    )
+                if len(data) < 5 * 1024 * 1024 and part_number != expected:
+                    return self._send_error_json(
+                        400,
+                        "validation_error",
+                        "each part must be at least 5MB unless it is the final part",
+                    )
+                record["parts"][part_number] = data
+                record.update({"filename": filename, "content_type": content_type})
+                return self._send_json(
+                    {
+                        "object": "file_upload",
+                        "id": upload_id,
+                        "status": "pending",
+                        "filename": filename,
+                        "content_type": content_type,
+                        "content_length": str(len(data)),
+                        "part_number": str(part_number),
+                    }
+                )
+
             record.update({"filename": filename, "data": data, "content_type": content_type})
             return self._send_json(
                 {
@@ -315,10 +388,13 @@ class _Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------ helper
 
     @staticmethod
-    def _parse_multipart(raw: bytes, content_type: str) -> tuple[str, bytes, str]:
-        """Pull (filename, bytes, content_type) out of the multipart/form-data body."""
+    def _parse_multipart_fields(
+        raw: bytes, content_type: str
+    ) -> dict[str, tuple[str | None, bytes, str | None]]:
+        """Map every form field to (filename, payload, content_type)."""
+        parsed: dict[str, tuple[str | None, bytes, str | None]] = {}
         if not raw:
-            return "upload.bin", b"", "application/octet-stream"
+            return parsed
         message = email.parser.BytesParser(policy=email.policy.default).parsebytes(
             b"Content-Type: "
             + content_type.encode()
@@ -326,13 +402,18 @@ class _Handler(BaseHTTPRequestHandler):
             + raw
         )
         if not message.is_multipart():
-            return "upload.bin", raw, "application/octet-stream"
+            parsed["file"] = ("upload.bin", raw, "application/octet-stream")
+            return parsed
         for part in message.iter_parts():
-            if part.get_param("name", header="content-disposition") != "file":
+            name = part.get_param("name", header="content-disposition")
+            if not name:
                 continue
-            filename = part.get_filename() or "upload.bin"
-            return filename, part.get_payload(decode=True) or b"", part.get_content_type()
-        return "upload.bin", b"", "application/octet-stream"
+            parsed[name] = (
+                part.get_filename(),
+                part.get_payload(decode=True) or b"",
+                part.get_content_type(),
+            )
+        return parsed
 
 
 class FakeNotion:

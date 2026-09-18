@@ -1,5 +1,6 @@
 [server]
-maxUploadSize = 25
+# Slightly above MAX_UPLOAD_MB so the browser can send a 50 MB file plus form overhead.
+maxUploadSize = 60
 
 [browser]
 gatherUsageStats = false

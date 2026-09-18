@@ -24,7 +24,7 @@ from filedrop import FileDrop, Settings  # noqa: E402
 
 TOKEN = "ntn_test_token"
 DS_ID = "3f1c0b0e-0000-4000-8000-abcdefabcdef"
-APP = os.path.join(PROJECT_ROOT, "app.py")
+APP = os.path.join(PROJECT_ROOT, "Upload.py")
 
 
 @pytest.fixture()
