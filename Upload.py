@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from ui import config_gate, get_filedrop, get_settings, human_size, page_config
+from ui import config_gate, get_filedrop, get_settings, human_size, page_config, staging_notice
 
 page_config("Upload a document")
 
@@ -23,6 +23,8 @@ st.caption(
 
 if not config_gate():
     st.stop()
+
+staging_notice()
 
 file_limit = settings.max_upload_bytes
 total_limit = settings.max_total_upload_bytes

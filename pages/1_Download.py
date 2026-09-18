@@ -9,7 +9,15 @@ from __future__ import annotations
 
 import streamlit as st
 
-from ui import config_gate, get_filedrop, get_settings, human_date, human_size, page_config
+from ui import (
+    config_gate,
+    get_filedrop,
+    get_settings,
+    human_date,
+    human_size,
+    page_config,
+    staging_notice,
+)
 
 page_config("Download documents")
 
@@ -20,6 +28,8 @@ st.caption("Everything approved for sharing. Click **Get file** to pull a copy."
 
 if not config_gate():
     st.stop()
+
+staging_notice()
 
 drop = get_filedrop()
 prepared: dict[str, bytes] = st.session_state.setdefault("prepared", {})
