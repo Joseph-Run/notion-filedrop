@@ -79,7 +79,6 @@ class Settings:
     )
     upload_passcode: str = field(default_factory=lambda: _secret("UPLOAD_PASSCODE"))
     site_name: str = field(default_factory=lambda: _secret("SITE_NAME") or "Community File Drop")
-    staging: bool = field(default_factory=lambda: _secret_flag("STAGING", False))
 
     @property
     def max_upload_bytes(self) -> int:

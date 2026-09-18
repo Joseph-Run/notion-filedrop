@@ -79,21 +79,6 @@ def test_download_page_hides_unapproved_uploads(app_factory, fake_notion):
     assert "Pending secret" in text
 
 
-def test_staging_deployments_announce_themselves(app_factory):
-    """A test site must never be mistaken for the live one."""
-    app_factory(staging=True, site_name="Community File Drop (staging)")
-    at = open_app()
-    assert not at.exception, at.exception
-    assert "Staging copy" in "\n".join(w.value for w in at.warning)
-
-
-def test_the_live_site_carries_no_staging_banner(app_factory):
-    app_factory(staging=False)
-    at = open_app()
-    assert not at.exception, at.exception
-    assert "Staging copy" not in "\n".join(w.value for w in at.warning)
-
-
 def test_a_row_with_several_files_gets_a_button_each(app_factory):
     """One label, three files: three independent fetch/save pairs on the page."""
     settings = app_factory(require_approval=False)

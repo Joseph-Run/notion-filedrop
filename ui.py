@@ -37,16 +37,6 @@ def config_gate() -> bool:
     return False
 
 
-def staging_notice() -> None:
-    """Loudly mark a test deployment so its uploads are never mistaken for real ones."""
-    settings = get_settings()
-    if settings.staging:
-        st.warning(
-            "**Staging copy.** Uploads here go to the test database only — this is not "
-            "the live drop, and nothing you see on this page is real."
-        )
-
-
 def human_size(num_bytes: int) -> str:
     if num_bytes < 1024:
         return f"{num_bytes} B"
