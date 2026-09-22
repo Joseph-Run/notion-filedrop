@@ -86,7 +86,7 @@ the test row. It leaves your workspace as it found it.
 | `MAX_UPLOAD_MB` | `50` | per file; above 20 MB the file is sent in parts, hard-capped at Notion's 5 GB |
 | `MAX_FILES_PER_UPLOAD` | `10` | how many files one label may carry |
 | `MAX_TOTAL_UPLOAD_MB` | `150` | per submission — every chosen file is held in memory at once |
-| `ALLOWED_EXTENSIONS` | documents + images + zip | allowlist, extension based |
+| `ALLOWED_EXTENSIONS` | documents, images, mp4, zip | allowlist, extension based |
 | `UPLOAD_PASSCODE` | empty | if set, uploading needs a shared word |
 | `SITE_NAME` | `Community File Drop` | shown in the UI |
 | `NOTION_API_BASE` | `https://api.notion.com` | only for tests |
@@ -131,6 +131,11 @@ servers.
   ceiling if you have a paid workspace (the free plan caps uploads at 5 MB regardless),
   and raise the other two caps to match.
 - **~3 requests/second** against Notion. Fine for a small drop, not for a crowd.
+- **Video**: `.mp4` is accepted out of the box. A 50 MB cap is roughly a minute of
+  phone footage — for longer clips raise `MAX_UPLOAD_MB` and `MAX_TOTAL_UPLOAD_MB`,
+  and make sure the browser ceiling (`[server] maxUploadSize` in
+  `.streamlit/config.toml`, 200 MB) stays larger than both. Need `.mov`/`.webm` too?
+  Add them to `ALLOWED_EXTENSIONS` in the secrets.
 - **Anonymous uploads are public content.** Nothing stops someone uploading
   something illegal or malicious. The allowlist blocks executables and scripts, and
   `UPLOAD_PASSCODE` stops drive-by uploads, but the real control is the approval

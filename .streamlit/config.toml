@@ -1,6 +1,7 @@
 [server]
-# Slightly above MAX_UPLOAD_MB so the browser can send a 50 MB file plus form overhead.
-maxUploadSize = 60
+# Browser-side ceiling. The app's own MAX_UPLOAD_MB is the limit visitors actually
+# see; this just has to be at least that big (video needs headroom).
+maxUploadSize = 200
 
 [browser]
 gatherUsageStats = false

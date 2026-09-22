@@ -198,6 +198,43 @@ def test_validation_rules(filename, size, title, expect_ok):
     assert bool(result) is expect_ok, result.error
 
 
+def test_the_default_allowlist_takes_video_and_documents():
+    """Regression: mp4 was missing, so the live site rejected phone videos."""
+    from filedrop.config import DEFAULT_ALLOWED_EXTENSIONS, _parse_extensions
+
+    for name, size in [
+        ("clip.mp4", 10 * 1024 * 1024),
+        ("report.pdf", 1000),
+        ("sheet.xlsx", 1000),
+        ("scan.png", 1000),
+    ]:
+        result = validate_upload(
+            name, size, max_bytes=50 * 1024 * 1024,
+            allowed_extensions=DEFAULT_ALLOWED_EXTENSIONS, title="T",
+        )
+        assert result, f"{name} should be accepted by default: {result.error}"
+
+    # still no executables, and a comma-separated string works the same as a tuple
+    assert _parse_extensions("") == DEFAULT_ALLOWED_EXTENSIONS
+    assert _parse_extensions(".mp4, .MOV") == ("mp4", "mov")
+    blocked = validate_upload(
+        "payload.exe", 1000, max_bytes=50 * 1024 * 1024,
+        allowed_extensions="exe,pdf", title="T",
+    )
+    assert not blocked and ".exe" in blocked.error
+
+
+def test_the_rejection_message_lists_extensions_not_characters():
+    """A string allowlist used to be iterated character by character."""
+    result = validate_upload(
+        "clip.avi", 1000, max_bytes=50 * 1024 * 1024,
+        allowed_extensions="pdf,mp4,mov", title="T",
+    )
+    assert not result
+    assert ".pdf, .mp4, .mov" in result.error
+    assert ".p, .d" not in result.error
+
+
 def test_the_size_message_is_unambiguous_at_the_boundary():
     """One byte over used to read 'Too large: 50.0 MB; the limit is 50 MB'."""
     limit = 50 * 1024 * 1024

@@ -10,10 +10,29 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
-DEFAULT_ALLOWED_EXTENSIONS = (
-    "pdf,doc,docx,odt,rtf,txt,md,csv,tsv,xls,xlsx,ods,ppt,pptx,odp,"
-    "png,jpg,jpeg,gif,webp,svg,zip"
+DEFAULT_ALLOWED_EXTENSIONS: tuple[str, ...] = (
+    "pdf", "doc", "docx", "odt", "rtf", "txt", "md",
+    "csv", "tsv", "xls", "xlsx", "ods",
+    "ppt", "pptx", "odp",
+    "png", "jpg", "jpeg", "gif", "webp", "svg",
+    "mp4",
+    "zip",
 )
+
+
+def _parse_extensions(raw: str) -> tuple[str, ...]:
+    """Turn the comma-separated ALLOWED_EXTENSIONS value into a tuple.
+
+    Falls back to the defaults when unset, and tolerates leading dots so
+    ".mp4,.mov" means the same as "mp4,mov".
+    """
+    if not (raw or "").strip():
+        return DEFAULT_ALLOWED_EXTENSIONS
+    return tuple(
+        ext.strip().lower().lstrip(".")
+        for ext in raw.split(",")
+        if ext.strip()
+    )
 
 
 def _secret(name: str, default: str = "") -> str:
@@ -71,11 +90,7 @@ class Settings:
         default_factory=lambda: float(_secret("MAX_TOTAL_UPLOAD_MB") or 150)
     )
     allowed_extensions: tuple[str, ...] = field(
-        default_factory=lambda: tuple(
-            ext.strip().lower()
-            for ext in (_secret("ALLOWED_EXTENSIONS") or DEFAULT_ALLOWED_EXTENSIONS).split(",")
-            if ext.strip()
-        )
+        default_factory=lambda: _parse_extensions(_secret("ALLOWED_EXTENSIONS"))
     )
     upload_passcode: str = field(default_factory=lambda: _secret("UPLOAD_PASSCODE"))
     site_name: str = field(default_factory=lambda: _secret("SITE_NAME") or "Community File Drop")

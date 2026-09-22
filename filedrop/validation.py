@@ -28,7 +28,7 @@ def validate_submission(
     files: Sequence[tuple[str, bytes]],
     *,
     max_bytes_per_file: int,
-    allowed_extensions: tuple[str, ...],
+    allowed_extensions: Sequence[str] | str,
     title: str = "",
     max_files: int = 10,
     max_total_bytes: int | None = None,
@@ -69,12 +69,28 @@ def extension_of(filename: str) -> str:
     return os.path.splitext(filename or "")[1].lstrip(".").lower()
 
 
+def allowed_list(allowed_extensions: Sequence[str] | str) -> tuple[str, ...]:
+    """Normalise an allowlist.
+
+    Accepts a comma-separated string as well as a sequence - iterating the raw
+    string would yield single characters, which is how a rejection message once
+    came out as "Allowed: .p, .d, .f".
+    """
+    if isinstance(allowed_extensions, str):
+        return tuple(
+            ext.strip().lower().lstrip(".")
+            for ext in allowed_extensions.split(",")
+            if ext.strip()
+        )
+    return tuple(str(ext).strip().lower().lstrip(".") for ext in allowed_extensions)
+
+
 def validate_upload(
     filename: str | None,
     size_bytes: int | None,
     *,
     max_bytes: int,
-    allowed_extensions: tuple[str, ...],
+    allowed_extensions: Sequence[str] | str,
     title: str = "",
 ) -> ValidationResult:
     """Reject junk before a byte reaches Notion."""
@@ -98,10 +114,11 @@ def validate_upload(
     ext = extension_of(filename)
     if ext in BLOCKED_EXTENSIONS:
         return ValidationResult(False, f".{ext} files are not accepted here.")
-    if allowed_extensions and ext not in allowed_extensions:
+    allowed = allowed_list(allowed_extensions)
+    if allowed and ext not in allowed:
         return ValidationResult(
             False,
             f".{ext or '?'} files are not accepted here. Allowed: "
-            + ", ".join(f".{e}" for e in allowed_extensions),
+            + ", ".join(f".{e}" for e in allowed),
         )
     return ValidationResult(True)
